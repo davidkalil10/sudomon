@@ -3,15 +3,20 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/logic_grid.dart';
 import '../models/grid_cell.dart';
 import '../models/enums.dart';
+import '../models/map_theme.dart';
 
 class LogicGridWidget extends StatelessWidget {
   final LogicGrid logicGrid;
-  final String playerAsset; // <--- 1. Novo parâmetro para receber a imagem
+  final String playerAsset;
+  final MapTheme theme;
+  final bool isReference;
 
   const LogicGridWidget({
     super.key,
     required this.logicGrid,
-    required this.playerAsset // <--- Adicionado ao construtor
+    required this.playerAsset,
+    required this.theme,
+    this.isReference = false,
   });
 
   @override
@@ -23,17 +28,18 @@ class LogicGridWidget extends StatelessWidget {
       aspectRatio: cols / rows,
       child: Container(
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.black, width: 2),
-          color: Colors.white,
+          // Borda externa preta grossa para fechar o mapa
+          border: Border.all(color: Colors.black, width: 3),
+          color: theme.fallbackColor,
         ),
         child: Column(
           children: List.generate(rows, (r) {
             return Expanded(
               child: Row(
                 children: List.generate(cols, (c) {
-                  // Lógica de Borda Inteligente
                   int myZone = logicGrid.grid[r][c].zoneId;
 
+                  // Verifica vizinhos para saber onde desenhar a borda grossa
                   bool borderTop = r > 0 && logicGrid.grid[r - 1][c].zoneId != myZone;
                   bool borderBottom = r < rows - 1 && logicGrid.grid[r + 1][c].zoneId != myZone;
                   bool borderLeft = c > 0 && logicGrid.grid[r][c - 1].zoneId != myZone;
@@ -50,7 +56,9 @@ class LogicGridWidget extends StatelessWidget {
                       borderBottom: borderBottom,
                       borderLeft: borderLeft,
                       borderRight: borderRight,
-                      playerAsset: playerAsset, // <--- 2. Repassando para a célula
+                      playerAsset: playerAsset,
+                      theme: theme,
+                      isReference: isReference,
                     ),
                   );
                 }),
@@ -73,7 +81,9 @@ class _GridCellWidget extends StatelessWidget {
   final bool borderBottom;
   final bool borderLeft;
   final bool borderRight;
-  final String playerAsset; // <--- Recebe aqui também
+  final String playerAsset;
+  final MapTheme theme;
+  final bool isReference;
 
   const _GridCellWidget({
     required this.cell,
@@ -85,38 +95,66 @@ class _GridCellWidget extends StatelessWidget {
     required this.borderBottom,
     required this.borderLeft,
     required this.borderRight,
-    required this.playerAsset, // <--- Obrigatório
+    required this.playerAsset,
+    required this.theme,
+    required this.isReference,
   });
 
-  Color _getZoneColor(int zoneId) {
-    const colors = [
-      Color(0xFFE3F2FD), // Azul Claro
-      Color(0xFFFFEBEE), // Rosa Claro
-      Color(0xFFE8F5E9), // Verde Claro
-      Color(0xFFFFF3E0), // Laranja Claro
-      Color(0xFFF3E5F5), // Roxo Claro
-      Color(0xFFE0F7FA), // Ciano Claro
-      Color(0xFFFFFDE7), // Amarelo Claro
-      Color(0xFFECEFF1), // Cinza Claro
+  // --- NOVA FUNÇÃO DE CORES INTENSAS ---
+  Color _getZoneBorderColor(int zoneId) {
+    // Lista de cores de alto contraste e vibrantes
+    const List<Color> zoneColors = [
+      Color(0xFFFF1744), // Vermelho Neon (Zona 0)
+      Color(0xFF2979FF), // Azul Elétrico (Zona 1)
+      Color(0xFF00E676), // Verde Brilhante (Zona 2)
+      Color(0xFFFFC400), // Âmbar/Ouro (Zona 3)
+      Color(0xFFD500F9), // Roxo Vibrante (Zona 4)
+      Color(0xFF00E5FF), // Ciano (Zona 5)
+      Color(0xFFFF9100), // Laranja (Zona 6)
+      Color(0xFFE040FB), // Magenta (Zona 7)
     ];
-    return colors[zoneId % colors.length];
+    return zoneColors[zoneId % zoneColors.length];
+  }
+
+  BoxDecoration _getDecoration() {
+    String assetPath = theme.getAssetForZone(cell.zoneId);
+
+    // Pega a cor específica desta zona
+    final Color myZoneColor = _getZoneBorderColor(cell.zoneId);
+
+    // Borda grossa e colorida para as Zonas
+    final zoneBorder = BorderSide(color: myZoneColor, width: 3.5); // Aumentei para 3.5
+
+    // Borda fina e transparente para a grade interna (apenas para guiar o olho)
+    const gridBorder = BorderSide(color: Colors.black12, width: 0.5);
+
+    return BoxDecoration(
+      color: theme.fallbackColor,
+      image: DecorationImage(
+        image: ResizeImage(
+          AssetImage(assetPath),
+          width: 64,
+          height: 64,
+        ),
+        repeat: ImageRepeat.repeat,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.none,
+        isAntiAlias: false,
+      ),
+      border: Border(
+        // Se for divisa de zona, usa a cor vibrante. Se não, usa a grade fina.
+        top: borderTop ? zoneBorder : (row == 0 ? BorderSide.none : gridBorder),
+        bottom: borderBottom ? zoneBorder : (row == totalRows - 1 ? BorderSide.none : gridBorder),
+        left: borderLeft ? zoneBorder : (col == 0 ? BorderSide.none : gridBorder),
+        right: borderRight ? zoneBorder : (col == totalCols - 1 ? BorderSide.none : gridBorder),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    const zoneBorder = BorderSide(color: Colors.black54, width: 2.0);
-    const gridBorder = BorderSide(color: Colors.black12, width: 0.5);
-
     return Container(
-      decoration: BoxDecoration(
-        color: _getZoneColor(cell.zoneId),
-        border: Border(
-          top: borderTop ? zoneBorder : (row == 0 ? BorderSide.none : gridBorder),
-          bottom: borderBottom ? zoneBorder : (row == totalRows - 1 ? BorderSide.none : gridBorder),
-          left: borderLeft ? zoneBorder : (col == 0 ? BorderSide.none : gridBorder),
-          right: borderRight ? zoneBorder : (col == totalCols - 1 ? BorderSide.none : gridBorder),
-        ),
-      ),
+      decoration: _getDecoration(),
       child: Center(
         child: _buildCellContent(),
       ),
@@ -124,52 +162,51 @@ class _GridCellWidget extends StatelessWidget {
   }
 
   Widget _buildCellContent() {
-    if (cell.type == CellType.empty) return const SizedBox.shrink();
-
-    if (cell.type == CellType.stone) {
-      return const Text('🪨', style: TextStyle(fontSize: 24));
-    }
-
-    if (cell.type == CellType.player) {
-      // --- 3. MUDANÇA DO BONECO ---
-      // Removemos o Container azul e colocamos a imagem direto
-      return Image.asset(
-        playerAsset,
-        width: 32,
-        height: 32,
-        fit: BoxFit.contain,
-        // Caso a imagem não carregue, mostra um ícone de fallback simples
-        errorBuilder: (context, error, stackTrace) {
-          return const Icon(Icons.person, color: Colors.blue, size: 28);
-        },
-      );
-    }
-
-    if (cell.type == CellType.character) {
-      if (cell.value.startsWith('http')) {
-        return Padding(
-          padding: const EdgeInsets.all(2.0),
-          child: CachedNetworkImage(
-            imageUrl: cell.value,
-            placeholder: (context, url) => const Padding(
-              padding: EdgeInsets.all(10.0),
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            errorWidget: (context, url, error) => const Icon(Icons.error, color: Colors.red),
-            fit: BoxFit.contain,
-          ),
-        );
-      } else {
-        return Text(
-          cell.value,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
-        );
+    // Lógica de "Reference Map" (Mapa Limpo)
+    if (isReference) {
+      if (cell.type == CellType.player || cell.type == CellType.character) {
+        return const SizedBox.shrink();
       }
     }
 
-    return Text(
-      cell.value,
-      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-    );
+    if (cell.type == CellType.empty) return const SizedBox.shrink();
+
+    Widget content;
+
+    if (cell.type == CellType.player) {
+      content = Image(
+        image: ResizeImage(AssetImage(playerAsset), width: 64, height: 64),
+        filterQuality: FilterQuality.none,
+        isAntiAlias: false,
+        fit: BoxFit.contain,
+      );
+    }
+    else if (cell.type == CellType.stone) {
+      content = Image(
+        image: ResizeImage(AssetImage(theme.obstacleAsset), width: 64, height: 64),
+        filterQuality: FilterQuality.none,
+        isAntiAlias: false,
+        fit: BoxFit.contain,
+      );
+    }
+    else if (cell.type == CellType.character && cell.value.startsWith('http')) {
+      content = Transform.scale(
+        scale: 1.5,
+        child: CachedNetworkImage(
+          imageUrl: cell.value,
+          filterQuality: FilterQuality.none,
+          placeholder: (context, url) => const SizedBox(
+              width: 10, height: 10,
+              child: CircularProgressIndicator(strokeWidth: 2)
+          ),
+          errorWidget: (context, url, error) => const Icon(Icons.error, color: Colors.red),
+          fit: BoxFit.contain,
+        ),
+      );
+    } else {
+      content = Text(cell.value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold));
+    }
+
+    return content;
   }
 }
