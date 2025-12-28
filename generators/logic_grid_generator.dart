@@ -6,6 +6,7 @@ import '../models/character.dart';
 import '../models/grid_cell.dart';
 import '../models/grid_solution.dart';
 import '../models/logic_grid.dart';
+import '../models/monster.dart';
 
 class LogicGridGenerator {
   static const int maxAttempts = 1000;
@@ -18,20 +19,19 @@ class LogicGridGenerator {
     int rows = 6,
     int cols = 6,
     int numStones = 4,
-    int? numCharacters,
+    required List<Monster> monsters,
     int numZones = 4,
     bool allowEmptyZones = true,
   }) {
-    // Validações
     if (rows < 6) rows = 6;
     if (cols < 6) cols = 6;
-    if (numZones < 4) numZones = 4; // Mínimo de 4 zonas (0 + 3 cores)
+    if (numZones < 4) numZones = 4;
 
+    int actualNumCharacters = monsters.length;
     int maxPossibleChars = min(rows, cols);
-    int actualNumCharacters = numCharacters ?? (maxPossibleChars - 1);
-
-    // Respeita limite matemático
-    if (actualNumCharacters >= maxPossibleChars) actualNumCharacters = maxPossibleChars - 1;
+    if (actualNumCharacters >= maxPossibleChars) {
+      actualNumCharacters = maxPossibleChars - 1;
+    }
     if (actualNumCharacters < 1) actualNumCharacters = 1;
 
     final random = Random();
@@ -41,7 +41,7 @@ class LogicGridGenerator {
       attempt++;
 
       try {
-        // --- PASSO 1: POSICIONAMENTO RÍGIDO ---
+        // --- PASSO 1: POSICIONAMENTO RÍGIDO (SUDOKU) ---
         List<Position> occupiedPositions = [];
         List<int> availRows = List.generate(rows, (i) => i);
         List<int> availCols = List.generate(cols, (i) => i);
@@ -57,7 +57,6 @@ class LogicGridGenerator {
           return Position(r, c);
         }
 
-        // Jogador e Buddy
         Position? playerPos = pickSlot();
         if (playerPos == null) continue;
         occupiedPositions.add(playerPos);
@@ -66,7 +65,6 @@ class LogicGridGenerator {
         if (buddyPos == null) continue;
         occupiedPositions.add(buddyPos);
 
-        // Inimigos
         List<Position> enemyPositions = [];
         int enemiesNeeded = actualNumCharacters - 1;
 
@@ -98,39 +96,30 @@ class LogicGridGenerator {
             enemyPositions.add(candidate);
             occupiedPositions.add(candidate);
           } else {
-            throw Exception("Falta de espaço");
+            throw Exception("Falta de espaço seguro no grid");
           }
         }
 
-        // --- PASSO 2: PREPARAÇÃO DE SEMENTES E CORES ---
+        // --- PASSO 2: SEMENTES ---
         List<_ZoneSeed> seeds = [];
 
-        // 2.1 Player + Buddy = Cor 0 (Sempre)
+        // Player e Buddy recebem ID 0 LÓGICO
         seeds.add(_ZoneSeed(pos: playerPos, colorId: 0));
         seeds.add(_ZoneSeed(pos: buddyPos, colorId: 0));
 
-        // 2.2 Calcular Cores Necessárias
-        // Se queremos 4 zonas, precisamos das cores 1, 2, 3 (a 0 já existe).
         List<int> requiredColors = List.generate(numZones - 1, (i) => i + 1);
-
-        // Vamos distribuir essas cores entre as sementes disponíveis (Inimigos + Vazias)
         List<Position> availableHolders = List.from(enemyPositions);
 
-        // Se não temos inimigos suficientes para segurar todas as cores, CRIAMOS sementes vazias
-        // Isso resolve o problema de "pedi 4 zonas mas só vieram 2"
         while (availableHolders.length < requiredColors.length) {
           int r = random.nextInt(rows);
           int c = random.nextInt(cols);
           bool collision = occupiedPositions.any((p) => p.row == r && p.col == c) ||
               availableHolders.any((p) => p.row == r && p.col == c);
-
-          // Buffer do jogador
           if (!collision && ((r - playerPos.row).abs() > 1 || (c - playerPos.col).abs() > 1)) {
             availableHolders.add(Position(r, c));
           }
         }
 
-        // Se allowEmptyZones for true, adicionamos mais algumas sementes extras para dar variedade
         if (allowEmptyZones) {
           int extras = max(2, (rows * cols) ~/ 6);
           for(int i=0; i<extras; i++) {
@@ -144,14 +133,10 @@ class LogicGridGenerator {
           }
         }
 
-        // --- PASSO 3: ATRIBUIÇÃO DE CORES ---
-        // Agora temos 'availableHolders' (inimigos + vazios). Vamos dar cores a eles.
-        // Primeiro, garantimos que cada requiredColor seja usada pelo menos uma vez.
-
+        // --- PASSO 3: CORES LÓGICAS ---
         availableHolders.shuffle(random);
         int holderIdx = 0;
 
-        // Atribui as cores obrigatórias
         for (int color in requiredColors) {
           if (holderIdx < availableHolders.length) {
             seeds.add(_ZoneSeed(pos: availableHolders[holderIdx], colorId: color));
@@ -159,8 +144,6 @@ class LogicGridGenerator {
           }
         }
 
-        // Para os holders que sobraram, atribui cores aleatórias (1..N)
-        // Isso cria a fusão natural (agrupamento)
         while (holderIdx < availableHolders.length) {
           int rndColor = 1 + random.nextInt(numZones - 1);
           seeds.add(_ZoneSeed(pos: availableHolders[holderIdx], colorId: rndColor));
@@ -190,21 +173,36 @@ class LogicGridGenerator {
         _forceConnection(zoneMap, playerPos, buddyPos, rows, cols);
         _ensureMinZoneSize(zoneMap, rows, cols, seeds);
 
-        // --- PASSO 6: VALIDAÇÃO FINAL ---
-        // Verifica se todas as cores pedidas (0 a numZones-1) existem no mapa.
-        // O Voronoi pode ter "comido" uma cor se a semente ficou isolada.
+        // Validação de Cores
         Set<int> colorsFound = {};
         for(var row in zoneMap) {
           for(var val in row) colorsFound.add(val);
         }
+        if (colorsFound.length < numZones) continue;
 
-        // Se faltou cor, o mapa não serve (pois o usuário pediu explicitamente X zonas)
-        if (colorsFound.length < numZones) {
-          // print("Falha: Gerou ${colorsFound.length} zonas, precisava de $numZones");
-          continue; // Tenta de novo
+        // --- PASSO 6.5: O GRANDE TRUQUE (ALEATORIZAR AS CORES VIZUAIS) ---
+        // Aqui desligamos o "Lógica 0" do "Visual Azul".
+        // Criamos um mapa de tradução: {0: CorX, 1: CorY, 2: CorZ...}
+
+        List<int> shuffledColors = List.generate(numZones, (i) => i);
+        shuffledColors.shuffle(random); // Embaralha a paleta
+
+        // Aplica a tradução no mapa inteiro
+        for (int r = 0; r < rows; r++) {
+          for (int c = 0; c < cols; c++) {
+            int logicId = zoneMap[r][c];
+            // Se o ID lógico for maior que o número de cores (erro raro), usa módulo
+            if (logicId >= numZones) logicId = logicId % numZones;
+
+            zoneMap[r][c] = shuffledColors[logicId];
+          }
         }
 
-        // --- FINALIZAR ---
+        // Descobre qual cor visual o Player ficou (pois precisamos saber disso para a lógica do jogo)
+        // Antes era sempre 0. Agora é shuffledColors[0].
+        int playerVisualZoneId = shuffledColors[0];
+
+        // --- PASSO 7: POPULAR ---
         List<List<GridCell>> grid = List.generate(
           rows,
               (r) => List.generate(
@@ -214,26 +212,43 @@ class LogicGridGenerator {
         );
 
         List<Character> finalChars = [];
-        List<String> names = List.generate(26, (i) => String.fromCharCode(65 + i));
+        List<String> logicNames = List.generate(26, (i) => String.fromCharCode(65 + i));
         int nameIdx = 0;
 
-        finalChars.add(Character(name: names[nameIdx++], position: buddyPos, zoneId: 0));
+        // Buddy (Target)
+        finalChars.add(Character(
+          name: logicNames[nameIdx++],
+          position: buddyPos,
+          // A zona do buddy também mudou de cor visualmente, é a mesma do player
+          zoneId: playerVisualZoneId,
+          monster: monsters[0],
+        ));
 
-        int limitVisible = min(rows, cols);
-        int visibleCount = max(0, limitVisible - 2);
-
+        // Inimigos
         for (int i = 0; i < enemyPositions.length; i++) {
+          if (i + 1 >= monsters.length) break;
           Position pos = enemyPositions[i];
-          int zId = zoneMap[pos.row][pos.col];
-          bool isHidden = i >= visibleCount;
-          String cName = isHidden ? '?' : names[nameIdx++];
-          finalChars.add(Character(name: cName, position: pos, zoneId: zId));
+          int zId = zoneMap[pos.row][pos.col]; // Já está com a cor visual embaralhada
+          Monster currentMonster = monsters[i + 1];
+
+          finalChars.add(Character(
+            name: logicNames[nameIdx++],
+            position: pos,
+            zoneId: zId,
+            monster: currentMonster,
+          ));
         }
 
-        grid[playerPos.row][playerPos.col] = GridCell(type: CellType.player, value: '👤', zoneId: 0);
+        grid[playerPos.row][playerPos.col] = GridCell(
+            type: CellType.player, value: '👤', zoneId: playerVisualZoneId
+        );
+
         for (var c in finalChars) {
           CellType type = (c.name == '?') ? CellType.safe : CellType.character;
-          grid[c.position.row][c.position.col] = GridCell(type: type, value: c.name, zoneId: c.zoneId);
+          String cellValue = c.monster != null ? c.monster!.imageUrl : c.name;
+          grid[c.position.row][c.position.col] = GridCell(
+              type: type, value: cellValue, zoneId: c.zoneId
+          );
         }
 
         List<Position> stoneSlots = [];
@@ -246,7 +261,9 @@ class LogicGridGenerator {
         int finalStones = min(numStones, stoneSlots.length);
         for(int i=0; i<finalStones; i++){
           Position p = stoneSlots[i];
-          grid[p.row][p.col] = GridCell(type: CellType.stone, value: '🪨', zoneId: zoneMap[p.row][p.col]);
+          grid[p.row][p.col] = GridCell(
+              type: CellType.stone, value: '🪨', zoneId: zoneMap[p.row][p.col]
+          );
         }
 
         final validChars = finalChars.where((c) => c.name != '?').toList();
@@ -254,7 +271,8 @@ class LogicGridGenerator {
           size: max(rows, cols),
           zoneStructure: ZoneStructure(rows, cols),
           playerPos: playerPos,
-          playerZoneId: 0,
+          // Atualiza a solução com a nova cor visual do player
+          playerZoneId: playerVisualZoneId,
           characters: validChars,
           numStones: finalStones,
           zoneGrid: zoneMap,
@@ -266,23 +284,32 @@ class LogicGridGenerator {
         continue;
       }
     }
-    throw Exception("Erro ao gerar mapa.");
+    throw Exception("Erro na geração.");
   }
 
-  // Métodos Auxiliares
+  // --- MÉTODOS AUXILIARES ---
+  // (Mantidos IGUAIS ao anterior: _ensureMinZoneSize e _forceConnection)
+  // Copie-os do código anterior ou mantenha se já estiverem lá.
+  // Vou incluí-los aqui para garantir que você tenha o arquivo completo.
+
   static void _ensureMinZoneSize(List<List<int>> map, int rows, int cols, List<_ZoneSeed> seeds) {
-    Map<int, int> counts = {};
-    for(var row in map) {
-      for(var id in row) counts[id] = (counts[id] ?? 0) + 1;
-    }
-    // Expande sementes cuja cor está muito fraca no mapa
     for (var seed in seeds) {
-      if ((counts[seed.colorId] ?? 0) < 4) { // Se a cor tem menos de 4 células
+      int myColor = seed.colorId;
+      int sameColorNeighbors = 0;
+      for(int r = seed.pos.row - 1; r <= seed.pos.row + 1; r++) {
+        for(int c = seed.pos.col - 1; c <= seed.pos.col + 1; c++) {
+          if (r >= 0 && r < rows && c >= 0 && c < cols) {
+            if (r == seed.pos.row && c == seed.pos.col) continue;
+            if (map[r][c] == myColor) sameColorNeighbors++;
+          }
+        }
+      }
+      if (sameColorNeighbors < 2) {
         for(int r = seed.pos.row - 1; r <= seed.pos.row + 1; r++) {
           for(int c = seed.pos.col - 1; c <= seed.pos.col + 1; c++) {
             if (r >= 0 && r < rows && c >= 0 && c < cols) {
-              if (map[r][c] != 0) { // Não apaga o Player
-                map[r][c] = seed.colorId;
+              if (map[r][c] != 0) {
+                map[r][c] = myColor;
               }
             }
           }

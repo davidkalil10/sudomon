@@ -1,150 +1,175 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../models/logic_grid.dart';
 import '../models/grid_cell.dart';
 import '../models/enums.dart';
 
-// PARTE 1: O Desenho de uma única Célula
-class GridCellWidget extends StatelessWidget {
-  final GridCell cell;
+class LogicGridWidget extends StatelessWidget {
+  final LogicGrid logicGrid;
+  final String playerAsset; // <--- 1. Novo parâmetro para receber a imagem
 
-  const GridCellWidget({super.key, required this.cell});
+  const LogicGridWidget({
+    super.key,
+    required this.logicGrid,
+    required this.playerAsset // <--- Adicionado ao construtor
+  });
 
   @override
   Widget build(BuildContext context) {
+    int rows = logicGrid.grid.length;
+    int cols = logicGrid.grid[0].length;
+
+    return AspectRatio(
+      aspectRatio: cols / rows,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.black, width: 2),
+          color: Colors.white,
+        ),
+        child: Column(
+          children: List.generate(rows, (r) {
+            return Expanded(
+              child: Row(
+                children: List.generate(cols, (c) {
+                  // Lógica de Borda Inteligente
+                  int myZone = logicGrid.grid[r][c].zoneId;
+
+                  bool borderTop = r > 0 && logicGrid.grid[r - 1][c].zoneId != myZone;
+                  bool borderBottom = r < rows - 1 && logicGrid.grid[r + 1][c].zoneId != myZone;
+                  bool borderLeft = c > 0 && logicGrid.grid[r][c - 1].zoneId != myZone;
+                  bool borderRight = c < cols - 1 && logicGrid.grid[r][c + 1].zoneId != myZone;
+
+                  return Expanded(
+                    child: _GridCellWidget(
+                      cell: logicGrid.grid[r][c],
+                      row: r,
+                      col: c,
+                      totalRows: rows,
+                      totalCols: cols,
+                      borderTop: borderTop,
+                      borderBottom: borderBottom,
+                      borderLeft: borderLeft,
+                      borderRight: borderRight,
+                      playerAsset: playerAsset, // <--- 2. Repassando para a célula
+                    ),
+                  );
+                }),
+              ),
+            );
+          }),
+        ),
+      ),
+    );
+  }
+}
+
+class _GridCellWidget extends StatelessWidget {
+  final GridCell cell;
+  final int row;
+  final int col;
+  final int totalRows;
+  final int totalCols;
+  final bool borderTop;
+  final bool borderBottom;
+  final bool borderLeft;
+  final bool borderRight;
+  final String playerAsset; // <--- Recebe aqui também
+
+  const _GridCellWidget({
+    required this.cell,
+    required this.row,
+    required this.col,
+    required this.totalRows,
+    required this.totalCols,
+    required this.borderTop,
+    required this.borderBottom,
+    required this.borderLeft,
+    required this.borderRight,
+    required this.playerAsset, // <--- Obrigatório
+  });
+
+  Color _getZoneColor(int zoneId) {
+    const colors = [
+      Color(0xFFE3F2FD), // Azul Claro
+      Color(0xFFFFEBEE), // Rosa Claro
+      Color(0xFFE8F5E9), // Verde Claro
+      Color(0xFFFFF3E0), // Laranja Claro
+      Color(0xFFF3E5F5), // Roxo Claro
+      Color(0xFFE0F7FA), // Ciano Claro
+      Color(0xFFFFFDE7), // Amarelo Claro
+      Color(0xFFECEFF1), // Cinza Claro
+    ];
+    return colors[zoneId % colors.length];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const zoneBorder = BorderSide(color: Colors.black54, width: 2.0);
+    const gridBorder = BorderSide(color: Colors.black12, width: 0.5);
+
     return Container(
       decoration: BoxDecoration(
-        color: _getZoneColor(cell.zoneId), // Pinta o fundo com a cor da zona
-        border: Border.all(
-          color: Colors.black.withOpacity(0.05), // Borda bem suave
-          width: 0.5,
+        color: _getZoneColor(cell.zoneId),
+        border: Border(
+          top: borderTop ? zoneBorder : (row == 0 ? BorderSide.none : gridBorder),
+          bottom: borderBottom ? zoneBorder : (row == totalRows - 1 ? BorderSide.none : gridBorder),
+          left: borderLeft ? zoneBorder : (col == 0 ? BorderSide.none : gridBorder),
+          right: borderRight ? zoneBorder : (col == totalCols - 1 ? BorderSide.none : gridBorder),
         ),
       ),
       child: Center(
-        child: _buildContent(),
+        child: _buildCellContent(),
       ),
     );
   }
 
-  // Define o que aparece dentro do quadrado
-  Widget _buildContent() {
-    switch (cell.type) {
-      case CellType.player:
-        return Container(
-          width: 30, height: 30,
-          decoration: BoxDecoration(
-            color: Colors.blue[700],
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))
-            ],
-          ),
-          child: const Icon(Icons.person, color: Colors.white, size: 20),
-        );
+  Widget _buildCellContent() {
+    if (cell.type == CellType.empty) return const SizedBox.shrink();
 
-      case CellType.character:
-      // Personagem visível (A, B, C...)
-        return Container(
-          width: 32, height: 32,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.8), // Fundo branco translúcido
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              cell.value,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
-          ),
-        );
-
-      case CellType.safe:
-      // O slot oculto (?)
-        return Container(
-          width: 28, height: 28,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.black26, width: 2), // Círculo vazio
-          ),
-          child: const Center(
-            child: Text(
-                "?",
-                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black54)
-            ),
-          ),
-        );
-
-      case CellType.stone:
-        return const Text('🪨', style: TextStyle(fontSize: 22));
-
-      case CellType.empty:
-      default:
-        return const SizedBox(); // Não desenha nada, só mostra a cor do fundo
+    if (cell.type == CellType.stone) {
+      return const Text('🪨', style: TextStyle(fontSize: 24));
     }
-  }
 
-  // Paleta de Cores para as Zonas Orgânicas
-  Color _getZoneColor(int zoneId) {
-    // Lista de cores suaves (Pastel)
-    final colors = [
-      Color(0xFFE3F2FD), // Azul muito claro (Buddy/Player geralmente cai aqui se for 0)
-      Color(0xFFFFEBEE), // Rosa claro
-      Color(0xFFE8F5E9), // Verde claro
-      Color(0xFFFFF3E0), // Laranja claro
-      Color(0xFFF3E5F5), // Roxo claro
-      Color(0xFFE0F7FA), // Ciano claro
-      Color(0xFFFFFDE7), // Amarelo claro
-      Color(0xFFECEFF1), // Cinza azulado
-    ];
-    // Usa o operador % para garantir que nunca estoure a lista
-    return colors[zoneId % colors.length];
-  }
-}
+    if (cell.type == CellType.player) {
+      // --- 3. MUDANÇA DO BONECO ---
+      // Removemos o Container azul e colocamos a imagem direto
+      return Image.asset(
+        playerAsset,
+        width: 32,
+        height: 32,
+        fit: BoxFit.contain,
+        // Caso a imagem não carregue, mostra um ícone de fallback simples
+        errorBuilder: (context, error, stackTrace) {
+          return const Icon(Icons.person, color: Colors.blue, size: 28);
+        },
+      );
+    }
 
-// PARTE 2: O Grid que segura as células
-class LogicGridWidget extends StatelessWidget {
-  final LogicGrid logicGrid;
-
-  const LogicGridWidget({super.key, required this.logicGrid});
-
-  @override
-  Widget build(BuildContext context) {
-    // Recuperamos as dimensões do grid gerado
-    final rows = logicGrid.solution.zoneStructure.rows;
-    final cols = logicGrid.solution.zoneStructure.cols;
-
-    return Center(
-      child: AspectRatio(
-        // Se temos 8 colunas e 4 linhas, a proporção é 2/1 (o dobro de largura)
-        aspectRatio: cols / rows,
-        child: Container(
-          // Uma borda grossa ao redor do tabuleiro inteiro
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.black87, width: 2),
-            color: Colors.grey[200], // Fundo de segurança
-          ),
-          child: GridView.builder(
-            // Importante: Desativar scroll para o grid ficar fixo
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: rows * cols,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: cols, // Define quantas colunas tem
-              childAspectRatio: 1.0, // Força cada célula a ser quadrada perfeita
-              crossAxisSpacing: 0,
-              mainAxisSpacing: 0,
+    if (cell.type == CellType.character) {
+      if (cell.value.startsWith('http')) {
+        return Padding(
+          padding: const EdgeInsets.all(2.0),
+          child: CachedNetworkImage(
+            imageUrl: cell.value,
+            placeholder: (context, url) => const Padding(
+              padding: EdgeInsets.all(10.0),
+              child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            itemBuilder: (context, index) {
-              // Matemática para converter índice linear (0..47) em (linha, coluna)
-              final r = index ~/ cols;
-              final c = index % cols;
-
-              final cell = logicGrid.getCell(r, c);
-
-              // Chama o widget da Célula que criamos acima
-              return GridCellWidget(cell: cell);
-            },
+            errorWidget: (context, url, error) => const Icon(Icons.error, color: Colors.red),
+            fit: BoxFit.contain,
           ),
-        ),
-      ),
+        );
+      } else {
+        return Text(
+          cell.value,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+        );
+      }
+    }
+
+    return Text(
+      cell.value,
+      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
     );
   }
 }

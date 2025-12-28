@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../generators/logic_grid_generator.dart';
 import '../models/logic_grid.dart';
 import '../widgets/game_board.dart';
+import '../services/dex_service.dart';
+import '../models/monster.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -14,13 +16,17 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   LogicGrid? grid;
 
-  // Configurações
+  // --- Configurações do Jogo ---
   double rows = 6;
   double cols = 6;
   double numCharacters = 5;
   double numStones = 8;
   double numZones = 4;
   bool allowEmptyZones = true;
+
+  // --- Configuração Visual ---
+  // Define qual imagem será usada para o jogador (padrão: boy)
+  String playerAsset = 'assets/images/boy.png';
 
   @override
   void initState() {
@@ -31,12 +37,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _generateGrid() {
+    // 1. Define quantos monstros precisamos (baseado no slider)
+    int totalMonstersNeeded = numCharacters.toInt();
+
+    // 2. Busca monstros na Pokedex (com lógica de Shiny e Captura)
+    List<Monster> roundMonsters = DexService().getMonstersForRound(totalMonstersNeeded);
+
     setState(() {
+      // 3. Gera o grid matemático passando os monstros
       grid = LogicGridGenerator.generate(
         rows: rows.toInt(),
         cols: cols.toInt(),
         numStones: numStones.toInt(),
-        numCharacters: numCharacters.toInt(),
+        monsters: roundMonsters,
         numZones: numZones.toInt(),
         allowEmptyZones: allowEmptyZones,
       );
@@ -45,19 +58,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // CORREÇÃO CRÍTICA: O limite matemático é o menor lado - 1 (para o jogador)
-    // Ex: Grid 6x10 -> Min é 6 -> Max NPCs = 5.
+    // --- Lógica de Limites (Matemática do Grid) ---
     double maxNPCs = (min(rows, cols) - 1).toDouble();
     if (maxNPCs < 1) maxNPCs = 1;
 
-    // Ajusta valor atual se estourar o novo limite
     if (numCharacters > maxNPCs) numCharacters = maxNPCs;
     if (numCharacters < 1) numCharacters = 1;
 
-    // Limite de pedras
     double totalCells = rows * cols;
     double maxStones = totalCells - (numCharacters + 1);
     if (maxStones < 0) maxStones = 0;
+    // Trava para não encher demais de pedra
+    if (maxStones > (totalCells * 0.6)) maxStones = totalCells * 0.6;
     if (numStones > maxStones) numStones = maxStones;
 
     return Scaffold(
@@ -75,17 +87,23 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
+          // ÁREA DO TABULEIRO
           Expanded(
             child: Center(
               child: grid == null
                   ? const CircularProgressIndicator()
                   : Padding(
                 padding: const EdgeInsets.all(20.0),
-                child: LogicGridWidget(logicGrid: grid!),
+                // AQUI: Passamos o playerAsset escolhido para o tabuleiro
+                child: LogicGridWidget(
+                  logicGrid: grid!,
+                  playerAsset: playerAsset,
+                ),
               ),
             ),
           ),
 
+          // PAINEL DE CONTROLE
           Container(
             padding: const EdgeInsets.fromLTRB(20, 15, 20, 30),
             decoration: BoxDecoration(
@@ -99,6 +117,21 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // --- SELETOR DE PERSONAGEM ---
+                const Text("Escolha seu Treinador:", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  children: [
+                    _buildAvatarOption('assets/images/boy.png'),
+                    const SizedBox(width: 15),
+                    _buildAvatarOption('assets/images/girl.png'),
+                  ],
+                ),
+                const Divider(height: 25),
+                // -----------------------------
+
+                // CONFIGURAÇÕES DO GRID
                 Row(
                   children: [
                     Expanded(child: _buildSlider("Linhas", 6, 10, rows, (v) => rows = v)),
@@ -106,7 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Expanded(child: _buildSlider("Colunas", 6, 10, cols, (v) => cols = v)),
                   ],
                 ),
-                const SizedBox(height: 5),
+
                 Row(
                   children: [
                     Expanded(child: _buildSlider("Cores (Zonas)", 4, 10, numZones, (v) => numZones = v)),
@@ -126,6 +159,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     )
                   ],
                 ),
+
                 Row(
                   children: [
                     Expanded(child: _buildSlider("Personagens", 1, maxNPCs, numCharacters, (v) => numCharacters = v)),
@@ -133,7 +167,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     Expanded(child: _buildSlider("Pedras", 0, maxStones, numStones, (v) => numStones = v)),
                   ],
                 ),
+
                 const SizedBox(height: 10),
+
+                // BOTÃO GERAR
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -152,6 +189,38 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // Widget para os botões redondos de seleção de personagem
+  Widget _buildAvatarOption(String assetPath) {
+    bool isSelected = playerAsset == assetPath;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          playerAsset = assetPath;
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.grey[100],
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: isSelected ? Colors.blue : Colors.transparent,
+            width: 3,
+          ),
+        ),
+        child: Image.asset(
+          assetPath,
+          width: 45,
+          height: 45,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) => const Icon(Icons.person, size: 45, color: Colors.grey),
+        ),
       ),
     );
   }
