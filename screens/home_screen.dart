@@ -14,16 +14,17 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   LogicGrid? grid;
 
-  // Valores iniciais
+  // Configurações
   double rows = 6;
   double cols = 6;
-  double numCharacters = 5; // NPCs (Excluindo jogador)
-  double numStones = 10;
+  double numCharacters = 5;
+  double numStones = 8;
+  double numZones = 4;
+  bool allowEmptyZones = true;
 
   @override
   void initState() {
     super.initState();
-    // Gera o primeiro grid logo ao abrir
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _generateGrid();
     });
@@ -36,30 +37,27 @@ class _HomeScreenState extends State<HomeScreen> {
         cols: cols.toInt(),
         numStones: numStones.toInt(),
         numCharacters: numCharacters.toInt(),
+        numZones: numZones.toInt(),
+        allowEmptyZones: allowEmptyZones,
       );
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // 1. CALCULAR LIMITES DINÂMICOS
-
-    // Máximo de NPCs possíveis (Sem contar o jogador)
-    // Ex: Grid 6x8. O menor lado é 6. Cabem 6 entidades únicas nas linhas.
-    // Tirando 1 linha para o jogador, sobram 5 para NPCs.
+    // CORREÇÃO CRÍTICA: O limite matemático é o menor lado - 1 (para o jogador)
+    // Ex: Grid 6x10 -> Min é 6 -> Max NPCs = 5.
     double maxNPCs = (min(rows, cols) - 1).toDouble();
+    if (maxNPCs < 1) maxNPCs = 1;
 
-    // Garante que o valor selecionado não estoure o limite se reduzirmos o grid
+    // Ajusta valor atual se estourar o novo limite
     if (numCharacters > maxNPCs) numCharacters = maxNPCs;
-    if (numCharacters < 1) numCharacters = 1; // Mínimo de 1 "Buddy"
+    if (numCharacters < 1) numCharacters = 1;
 
-    // Máximo de Pedras possíveis
-    // Tudo que não é Jogador nem NPC pode virar pedra
+    // Limite de pedras
     double totalCells = rows * cols;
-    double usedCells = numCharacters + 1; // NPCs + Jogador
-    double maxStones = totalCells - usedCells;
-
-    // Garante que pedras não estoure o limite
+    double maxStones = totalCells - (numCharacters + 1);
+    if (maxStones < 0) maxStones = 0;
     if (numStones > maxStones) numStones = maxStones;
 
     return Scaffold(
@@ -77,7 +75,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
-          // ÁREA DO TABULEIRO
           Expanded(
             child: Center(
               child: grid == null
@@ -89,55 +86,54 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // PAINEL DE CONTROLE
           Container(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 30), // Mais padding embaixo
+            padding: const EdgeInsets.fromLTRB(20, 15, 20, 30),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
               boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 15,
-                  offset: const Offset(0, -5),
-                )
+                BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 15, offset: const Offset(0, -5))
               ],
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  "Configurações",
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
-                ),
-                const SizedBox(height: 10),
-
-                // Linha 1: Tamanho do Grid
                 Row(
                   children: [
-                    Expanded(child: _buildSlider("Linhas", 4, 10, rows, (v) => rows = v)),
+                    Expanded(child: _buildSlider("Linhas", 6, 10, rows, (v) => rows = v)),
                     const SizedBox(width: 15),
-                    Expanded(child: _buildSlider("Colunas", 4, 10, cols, (v) => cols = v)),
+                    Expanded(child: _buildSlider("Colunas", 6, 10, cols, (v) => cols = v)),
                   ],
                 ),
-
                 const SizedBox(height: 5),
-
-                // Linha 2: Elementos (Com limites dinâmicos)
                 Row(
                   children: [
-                    // Slider de NPCs (1 até Maximo Possível)
-                    Expanded(child: _buildSlider("Inimigos", 1, maxNPCs, numCharacters, (v) => numCharacters = v)),
+                    Expanded(child: _buildSlider("Cores (Zonas)", 4, 10, numZones, (v) => numZones = v)),
+                    const SizedBox(width: 10),
+                    Column(
+                      children: [
+                        const Text("Zonas Livres", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+                        Transform.scale(
+                          scale: 0.8,
+                          child: Switch(
+                              value: allowEmptyZones,
+                              activeColor: Colors.blue,
+                              onChanged: (v) { setState(() => allowEmptyZones = v); }
+                          ),
+                        ),
+                      ],
+                    )
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(child: _buildSlider("Personagens", 1, maxNPCs, numCharacters, (v) => numCharacters = v)),
                     const SizedBox(width: 15),
-                    // Slider de Pedras (0 até Ocupar Todo o Resto)
                     Expanded(child: _buildSlider("Pedras", 0, maxStones, numStones, (v) => numStones = v)),
                   ],
                 ),
-
-                const SizedBox(height: 15),
-
-                // Botão Gerar
+                const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -148,7 +144,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       backgroundColor: Colors.blue[600],
                       foregroundColor: Colors.white,
-                      elevation: 2,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
@@ -162,8 +157,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildSlider(String label, double min, double max, double value, Function(double) onChanged) {
-    // Se por algum motivo min > max (ex: grid muito pequeno), trava no min
     if (max < min) max = min;
+    if (value < min) value = min;
+    if (value > max) value = max;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -172,32 +168,25 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54)),
-            Text(
-              "${value.toInt()} / ${max.toInt()}", // Mostra "Atual / Máximo"
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue[700]),
-            ),
+            Text("${value.toInt()}", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue[700])),
           ],
         ),
         SliderTheme(
           data: SliderTheme.of(context).copyWith(
             trackHeight: 4,
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
             activeTrackColor: Colors.blue[400],
             inactiveTrackColor: Colors.grey[200],
             thumbColor: Colors.blue[600],
-            overlayColor: Colors.blue.withOpacity(0.2),
           ),
           child: Slider(
             value: value,
             min: min,
             max: max,
-            // Se o intervalo for muito grande, não usa divisions fixas para ficar fluido
             divisions: (max - min) > 0 ? (max - min).toInt() : 1,
             onChanged: (v) {
-              setState(() {
-                onChanged(v);
-              });
+              setState(() => onChanged(v));
             },
           ),
         ),

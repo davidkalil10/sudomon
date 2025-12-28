@@ -8,10 +8,9 @@ import '../models/grid_solution.dart';
 import '../models/logic_grid.dart';
 
 class LogicGridGenerator {
-  static const int maxAttempts = 200;
+  static const int maxAttempts = 1000;
 
   static double _getDistance(int r1, int c1, int r2, int c2) {
-    // Distância Euclidiana para zonas mais arredondadas
     return sqrt(pow(r1 - r2, 2) + pow(c1 - c2, 2));
   }
 
@@ -20,13 +19,20 @@ class LogicGridGenerator {
     int cols = 6,
     int numStones = 4,
     int? numCharacters,
+    int numZones = 4,
+    bool allowEmptyZones = true,
   }) {
-    // Cálculo seguro de quantos chars cabem
+    // Validações
+    if (rows < 6) rows = 6;
+    if (cols < 6) cols = 6;
+    if (numZones < 4) numZones = 4; // Mínimo de 4 zonas (0 + 3 cores)
+
     int maxPossibleChars = min(rows, cols);
     int actualNumCharacters = numCharacters ?? (maxPossibleChars - 1);
-    if (actualNumCharacters >= maxPossibleChars) {
-      actualNumCharacters = maxPossibleChars - 1;
-    }
+
+    // Respeita limite matemático
+    if (actualNumCharacters >= maxPossibleChars) actualNumCharacters = maxPossibleChars - 1;
+    if (actualNumCharacters < 1) actualNumCharacters = 1;
 
     final random = Random();
     int attempt = 0;
@@ -35,170 +41,223 @@ class LogicGridGenerator {
       attempt++;
 
       try {
-        // 1. Grid e Listas
+        // --- PASSO 1: POSICIONAMENTO RÍGIDO ---
+        List<Position> occupiedPositions = [];
+        List<int> availRows = List.generate(rows, (i) => i);
+        List<int> availCols = List.generate(cols, (i) => i);
+
+        Position? pickSlot() {
+          if (availRows.isEmpty || availCols.isEmpty) return null;
+          int rIdx = random.nextInt(availRows.length);
+          int cIdx = random.nextInt(availCols.length);
+          int r = availRows[rIdx];
+          int c = availCols[cIdx];
+          availRows.removeAt(rIdx);
+          availCols.removeAt(cIdx);
+          return Position(r, c);
+        }
+
+        // Jogador e Buddy
+        Position? playerPos = pickSlot();
+        if (playerPos == null) continue;
+        occupiedPositions.add(playerPos);
+
+        Position? buddyPos = pickSlot();
+        if (buddyPos == null) continue;
+        occupiedPositions.add(buddyPos);
+
+        // Inimigos
+        List<Position> enemyPositions = [];
+        int enemiesNeeded = actualNumCharacters - 1;
+
+        for (int i = 0; i < enemiesNeeded; i++) {
+          int subAttempt = 0;
+          Position? candidate;
+          bool valid = false;
+
+          List<int> saveRows = List.from(availRows);
+          List<int> saveCols = List.from(availCols);
+
+          while (subAttempt < 20 && !valid) {
+            availRows = List.from(saveRows);
+            availCols = List.from(saveCols);
+            candidate = pickSlot();
+            if (candidate == null) break;
+
+            int dRow = (candidate.row - playerPos.row).abs();
+            int dCol = (candidate.col - playerPos.col).abs();
+
+            if (dRow <= 1 && dCol <= 1) {
+              subAttempt++;
+            } else {
+              valid = true;
+            }
+          }
+
+          if (valid && candidate != null) {
+            enemyPositions.add(candidate);
+            occupiedPositions.add(candidate);
+          } else {
+            throw Exception("Falta de espaço");
+          }
+        }
+
+        // --- PASSO 2: PREPARAÇÃO DE SEMENTES E CORES ---
+        List<_ZoneSeed> seeds = [];
+
+        // 2.1 Player + Buddy = Cor 0 (Sempre)
+        seeds.add(_ZoneSeed(pos: playerPos, colorId: 0));
+        seeds.add(_ZoneSeed(pos: buddyPos, colorId: 0));
+
+        // 2.2 Calcular Cores Necessárias
+        // Se queremos 4 zonas, precisamos das cores 1, 2, 3 (a 0 já existe).
+        List<int> requiredColors = List.generate(numZones - 1, (i) => i + 1);
+
+        // Vamos distribuir essas cores entre as sementes disponíveis (Inimigos + Vazias)
+        List<Position> availableHolders = List.from(enemyPositions);
+
+        // Se não temos inimigos suficientes para segurar todas as cores, CRIAMOS sementes vazias
+        // Isso resolve o problema de "pedi 4 zonas mas só vieram 2"
+        while (availableHolders.length < requiredColors.length) {
+          int r = random.nextInt(rows);
+          int c = random.nextInt(cols);
+          bool collision = occupiedPositions.any((p) => p.row == r && p.col == c) ||
+              availableHolders.any((p) => p.row == r && p.col == c);
+
+          // Buffer do jogador
+          if (!collision && ((r - playerPos.row).abs() > 1 || (c - playerPos.col).abs() > 1)) {
+            availableHolders.add(Position(r, c));
+          }
+        }
+
+        // Se allowEmptyZones for true, adicionamos mais algumas sementes extras para dar variedade
+        if (allowEmptyZones) {
+          int extras = max(2, (rows * cols) ~/ 6);
+          for(int i=0; i<extras; i++) {
+            int r = random.nextInt(rows);
+            int c = random.nextInt(cols);
+            bool collision = occupiedPositions.any((p) => p.row == r && p.col == c) ||
+                availableHolders.any((p) => p.row == r && p.col == c);
+            if (!collision && ((r - playerPos.row).abs() > 1 || (c - playerPos.col).abs() > 1)) {
+              availableHolders.add(Position(r, c));
+            }
+          }
+        }
+
+        // --- PASSO 3: ATRIBUIÇÃO DE CORES ---
+        // Agora temos 'availableHolders' (inimigos + vazios). Vamos dar cores a eles.
+        // Primeiro, garantimos que cada requiredColor seja usada pelo menos uma vez.
+
+        availableHolders.shuffle(random);
+        int holderIdx = 0;
+
+        // Atribui as cores obrigatórias
+        for (int color in requiredColors) {
+          if (holderIdx < availableHolders.length) {
+            seeds.add(_ZoneSeed(pos: availableHolders[holderIdx], colorId: color));
+            holderIdx++;
+          }
+        }
+
+        // Para os holders que sobraram, atribui cores aleatórias (1..N)
+        // Isso cria a fusão natural (agrupamento)
+        while (holderIdx < availableHolders.length) {
+          int rndColor = 1 + random.nextInt(numZones - 1);
+          seeds.add(_ZoneSeed(pos: availableHolders[holderIdx], colorId: rndColor));
+          holderIdx++;
+        }
+
+        // --- PASSO 4: VORONOI ---
+        List<List<int>> zoneMap = List.generate(rows, (_) => List.filled(cols, 0));
+        for (int r = 0; r < rows; r++) {
+          for (int c = 0; c < cols; c++) {
+            double minDist = double.infinity;
+            int chosenColor = 0;
+            for (var seed in seeds) {
+              double d = _getDistance(r, c, seed.pos.row, seed.pos.col);
+              if (d < minDist) {
+                minDist = d;
+                chosenColor = seed.colorId;
+              } else if (d == minDist && seed.colorId == 0) {
+                chosenColor = 0;
+              }
+            }
+            zoneMap[r][c] = chosenColor;
+          }
+        }
+
+        // --- PASSO 5: PÓS-PROCESSAMENTO ---
+        _forceConnection(zoneMap, playerPos, buddyPos, rows, cols);
+        _ensureMinZoneSize(zoneMap, rows, cols, seeds);
+
+        // --- PASSO 6: VALIDAÇÃO FINAL ---
+        // Verifica se todas as cores pedidas (0 a numZones-1) existem no mapa.
+        // O Voronoi pode ter "comido" uma cor se a semente ficou isolada.
+        Set<int> colorsFound = {};
+        for(var row in zoneMap) {
+          for(var val in row) colorsFound.add(val);
+        }
+
+        // Se faltou cor, o mapa não serve (pois o usuário pediu explicitamente X zonas)
+        if (colorsFound.length < numZones) {
+          // print("Falha: Gerou ${colorsFound.length} zonas, precisava de $numZones");
+          continue; // Tenta de novo
+        }
+
+        // --- FINALIZAR ---
         List<List<GridCell>> grid = List.generate(
           rows,
               (r) => List.generate(
             cols,
-                (c) => GridCell(type: CellType.empty, value: '.', zoneId: 0),
+                (c) => GridCell(type: CellType.empty, value: '.', zoneId: zoneMap[r][c]),
           ),
         );
 
-        // 2. Posicionar Jogador
-        final playerPos = Position(random.nextInt(rows), random.nextInt(cols));
+        List<Character> finalChars = [];
+        List<String> names = List.generate(26, (i) => String.fromCharCode(65 + i));
+        int nameIdx = 0;
 
-        var availableRows = List.generate(rows, (i) => i)..remove(playerPos.row);
-        var availableCols = List.generate(cols, (i) => i)..remove(playerPos.col);
+        finalChars.add(Character(name: names[nameIdx++], position: buddyPos, zoneId: 0));
 
-        availableCols.shuffle(random);
-        availableRows.shuffle(random);
+        int limitVisible = min(rows, cols);
+        int visibleCount = max(0, limitVisible - 2);
 
-        // 3. Posicionar Personagens (Sem definir Buddy ainda)
-        List<Character> allPlacedCharacters = [];
-        List<String> charNames = List.generate(26, (i) => String.fromCharCode(65 + i));
-
-        // Quantos slots temos?
-        int remainingSlots = min(availableRows.length, availableCols.length);
-
-        // Vamos preencher a lista de personagens
-        for (int i = 0; i < remainingSlots; i++) {
-          int r = availableRows[i];
-          int c = availableCols[i];
-
-          // ID único temporário para cada char (começando de 0)
-          int zoneId = i;
-
-          // Cria o char (ainda sem saber se é visível ou oculto, decidimos depois)
-          // Por enquanto, todos são placeholders
-          allPlacedCharacters.add(
-              Character(name: "TEMP", position: Position(r, c), zoneId: zoneId)
-          );
+        for (int i = 0; i < enemyPositions.length; i++) {
+          Position pos = enemyPositions[i];
+          int zId = zoneMap[pos.row][pos.col];
+          bool isHidden = i >= visibleCount;
+          String cName = isHidden ? '?' : names[nameIdx++];
+          finalChars.add(Character(name: cName, position: pos, zoneId: zId));
         }
 
-        // 4. GERAÇÃO DE ZONAS (Voronoi Puro)
-        // Usamos TODOS os personagens como sementes. O Jogador NÃO é semente.
-        // Assim, o Jogador vai "cair" naturalmente na zona de alguém.
-        List<List<int>> finalZoneMap = List.generate(rows, (_) => List.filled(cols, 0));
+        grid[playerPos.row][playerPos.col] = GridCell(type: CellType.player, value: '👤', zoneId: 0);
+        for (var c in finalChars) {
+          CellType type = (c.name == '?') ? CellType.safe : CellType.character;
+          grid[c.position.row][c.position.col] = GridCell(type: type, value: c.name, zoneId: c.zoneId);
+        }
 
-        for (int r = 0; r < rows; r++) {
-          for (int c = 0; c < cols; c++) {
-            double minDistance = double.infinity;
-            int chosenZoneId = 0;
-
-            for (var seed in allPlacedCharacters) {
-              double d = _getDistance(r, c, seed.position.row, seed.position.col);
-              // Pequeno ruído para bordas orgânicas
-              d += (random.nextDouble() * 0.2);
-
-              if (d < minDistance) {
-                minDistance = d;
-                chosenZoneId = seed.zoneId;
-              }
-            }
-            finalZoneMap[r][c] = chosenZoneId;
+        List<Position> stoneSlots = [];
+        for(int r=0; r<rows; r++){
+          for(int c=0; c<cols; c++){
+            if(grid[r][c].type == CellType.empty) stoneSlots.add(Position(r, c));
           }
         }
-
-        // 5. IDENTIFICAR O BUDDY (Quem é dono da zona do jogador?)
-        int playerZoneId = finalZoneMap[playerPos.row][playerPos.col];
-
-        // Encontra o personagem que é dono dessa zona
-        Character buddyChar = allPlacedCharacters.firstWhere((c) => c.zoneId == playerZoneId);
-
-        // 6. DISTRIBUIR NOMES E VISIBILIDADE
-        // Agora precisamos garantir que o Buddy seja Visível (Letra) e não Oculto (?)
-
-        List<Character> finalCharacters = [];
-        int nameIndex = 0;
-
-        // Primeiro, configuramos o Buddy
-        finalCharacters.add(Character(
-            name: charNames[nameIndex++], // Recebe 'A' (ou a primeira letra)
-            position: buddyChar.position,
-            zoneId: buddyChar.zoneId
-        ));
-
-        // Quantos outros visíveis restam?
-        int visibleOthersCount = actualNumCharacters - 1;
-
-        for (var char in allPlacedCharacters) {
-          if (char == buddyChar) continue; // Já processamos o buddy
-
-          if (visibleOthersCount > 0) {
-            // É um personagem visível
-            finalCharacters.add(Character(
-                name: charNames[nameIndex++],
-                position: char.position,
-                zoneId: char.zoneId
-            ));
-            visibleOthersCount--;
-          } else {
-            // É um personagem oculto (?)
-            finalCharacters.add(Character(
-                name: '?',
-                position: char.position,
-                zoneId: char.zoneId
-            ));
-          }
+        stoneSlots.shuffle(random);
+        int finalStones = min(numStones, stoneSlots.length);
+        for(int i=0; i<finalStones; i++){
+          Position p = stoneSlots[i];
+          grid[p.row][p.col] = GridCell(type: CellType.stone, value: '🪨', zoneId: zoneMap[p.row][p.col]);
         }
 
-        // 7. PREENCHER O GRID FINAL
-
-        // 7.1 Jogador
-        grid[playerPos.row][playerPos.col] = GridCell(
-          type: CellType.player,
-          value: '👤',
-          zoneId: playerZoneId, // Agora é garantido ser natural
-        );
-
-        // 7.2 Personagens
-        for (var char in finalCharacters) {
-          CellType type = (char.name == '?') ? CellType.safe : CellType.character;
-
-          grid[char.position.row][char.position.col] = GridCell(
-            type: type,
-            value: char.name,
-            zoneId: finalZoneMap[char.position.row][char.position.col],
-          );
-        }
-
-        // 7.3 Pedras e Vazios
-        List<Position> emptyCells = [];
-        for (int r = 0; r < rows; r++) {
-          for (int c = 0; c < cols; c++) {
-            if (grid[r][c].type == CellType.empty) {
-              int zId = finalZoneMap[r][c];
-              grid[r][c] = GridCell(type: CellType.empty, value: '.', zoneId: zId);
-              emptyCells.add(Position(r, c));
-            }
-          }
-        }
-
-        emptyCells.shuffle(random);
-        int stonesToPlace = min(numStones, emptyCells.length);
-
-        for (int i = 0; i < stonesToPlace; i++) {
-          final pos = emptyCells[i];
-          grid[pos.row][pos.col] = GridCell(
-            type: CellType.stone,
-            value: '🪨',
-            zoneId: finalZoneMap[pos.row][pos.col],
-          );
-        }
-
-        // 8. Retorno
-        final validChars = finalCharacters
-            .where((c) => c.name != '?')
-            .toList();
-
+        final validChars = finalChars.where((c) => c.name != '?').toList();
         final solution = GridSolution(
           size: max(rows, cols),
           zoneStructure: ZoneStructure(rows, cols),
           playerPos: playerPos,
-          playerZoneId: playerZoneId,
+          playerZoneId: 0,
           characters: validChars,
-          numStones: stonesToPlace,
-          zoneGrid: finalZoneMap,
+          numStones: finalStones,
+          zoneGrid: zoneMap,
         );
 
         return LogicGrid(grid, solution);
@@ -207,6 +266,68 @@ class LogicGridGenerator {
         continue;
       }
     }
-    throw Exception("Falha ao gerar grid.");
+    throw Exception("Erro ao gerar mapa.");
   }
+
+  // Métodos Auxiliares
+  static void _ensureMinZoneSize(List<List<int>> map, int rows, int cols, List<_ZoneSeed> seeds) {
+    Map<int, int> counts = {};
+    for(var row in map) {
+      for(var id in row) counts[id] = (counts[id] ?? 0) + 1;
+    }
+    // Expande sementes cuja cor está muito fraca no mapa
+    for (var seed in seeds) {
+      if ((counts[seed.colorId] ?? 0) < 4) { // Se a cor tem menos de 4 células
+        for(int r = seed.pos.row - 1; r <= seed.pos.row + 1; r++) {
+          for(int c = seed.pos.col - 1; c <= seed.pos.col + 1; c++) {
+            if (r >= 0 && r < rows && c >= 0 && c < cols) {
+              if (map[r][c] != 0) { // Não apaga o Player
+                map[r][c] = seed.colorId;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  static void _forceConnection(List<List<int>> map, Position start, Position end, int rows, int cols) {
+    List<List<int>> queue = [];
+    queue.add([start.row, start.col]);
+    Set<String> visited = {};
+    Map<String, List<int>> parent = {};
+    visited.add("${start.row},${start.col}");
+    bool found = false;
+    while(queue.isNotEmpty) {
+      var curr = queue.removeAt(0);
+      if (curr[0] == end.row && curr[1] == end.col) { found = true; break; }
+      [[0,1],[0,-1],[1,0],[-1,0]].forEach((d) {
+        int nr = curr[0]+d[0], nc = curr[1]+d[1];
+        if (nr>=0 && nr<rows && nc>=0 && nc<cols) {
+          String k = "$nr,$nc";
+          if (!visited.contains(k)) {
+            visited.add(k);
+            parent[k] = curr;
+            queue.add([nr,nc]);
+          }
+        }
+      });
+    }
+    if (found) {
+      int r = end.row, c = end.col;
+      while(r!=start.row || c!=start.col) {
+        map[r][c] = 0;
+        var p = parent["$r,$c"];
+        if(p==null) break;
+        r=p[0]; c=p[1];
+      }
+      map[start.row][start.col] = 0;
+    }
+  }
+}
+
+class _ZoneSeed {
+  final Position pos;
+  final int colorId;
+  _ZoneSeed({required this.pos, required this.colorId});
 }
